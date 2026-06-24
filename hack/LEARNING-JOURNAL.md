@@ -254,3 +254,38 @@ tracked files, but it **excludes** `build/**`, `go.*`, and `hack/**`
 at the repo root would get its references (e.g. `provider-template`) rewritten to
 `provider-learn`, corrupting the historical notes. Keeping it in `hack/` means it
 stays both **tracked/committed** and **untouched** by `prepare`.
+
+## Step 6 done: `make provider.addtype provider=Learn group=database kind=Instance`
+
+Scaffolds a new managed resource + its controller (replacing the example removed
+by `prepare`). It first installed `gomplate` (template renderer) into the tool
+cache, then generated:
+
+```
+apis/database/database.go                     # group doc package
+apis/database/v1alpha1/doc.go                 # +groupName marker for codegen
+apis/database/v1alpha1/groupversion_info.go   # Group/Version + SchemeBuilder
+apis/database/v1alpha1/instance_types.go      # Instance CRD Go structs
+internal/controller/instance/instance.go      # the ExternalClient skeleton
+internal/controller/instance/instance_test.go # table-driven test stub
+```
+
+What the generated `instance_types.go` gives us:
+- `InstanceParameters` (forProvider, desired) with one `configurableField`.
+- `InstanceObservation` (atProvider, observed) with `configurableField` +
+  `observableField`.
+- `InstanceSpec` embeds `xpv2.ManagedResourceSpec` (namespaced MR, v2 runtime);
+  `InstanceStatus` embeds `xpv1.ResourceStatus`.
+- `+kubebuilder` markers => Namespaced scope, status subresource, print columns.
+- `init()` registers `Instance`/`InstanceList` with the scheme.
+
+What `instance.go` gives us (the bits we'll replace):
+- `connector.Connect` already resolves `ProviderConfig`/`ClusterProviderConfig`
+  and extracts credentials — keep this.
+- `newNoOpService` + `external{service interface{}}` with `Observe/Create/Update/
+  Delete` that just `fmt.Printf` and return "exists & up-to-date". This is the
+  HTTP-client logic we implement against the mock API server later.
+
+Important: `addtype` generates files but does **not** wire them in. Still pending:
+- `apis/learn.go`            — add the `database` group to `AddToSchemes`.
+- `internal/controller/learn.go` — call `instance.SetupGated` in `SetupGated`.
