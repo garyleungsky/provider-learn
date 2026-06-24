@@ -28,10 +28,13 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
 )
 
-// defaultEndpoint is the address of a locally running mock-apiserver. It lets
-// the provider work out of the box for development when no endpoint is supplied
-// via the ProviderConfig credentials.
-const defaultEndpoint = "http://localhost:8088"
+// defaultEndpoint and defaultToken let the provider work out of the box against
+// a locally running mock-apiserver when no endpoint/token is supplied via the
+// ProviderConfig credentials.
+const (
+	defaultEndpoint = "http://localhost:8088"
+	defaultToken    = "mock-secret-token"
+)
 
 // apiInstance is the wire representation of an instance in the external API. It
 // mirrors the mock-apiserver's instance type: ConfigurableField is client-set,
@@ -43,22 +46,26 @@ type apiInstance struct {
 }
 
 // providerCredentials is the JSON shape expected in the ProviderConfig
-// credentials. It carries the base URL of the external API.
+// credentials. It carries the base URL of the external API and the static bearer
+// token used to authenticate API calls.
 type providerCredentials struct {
 	Endpoint string `json:"endpoint"`
+	Token    string `json:"token"`
 }
 
 // apiClient talks to the external instance API over HTTP.
 type apiClient struct {
 	baseURL string
+	token   string
 	http    *http.Client
 }
 
 // newAPIClient builds an apiClient from ProviderConfig credential bytes, which
-// are expected to be JSON of the form {"endpoint":"http://..."}. Empty or
-// missing credentials fall back to defaultEndpoint.
+// are expected to be JSON of the form {"endpoint":"http://...","token":"..."}.
+// Empty or missing fields fall back to defaultEndpoint / defaultToken.
 func newAPIClient(creds []byte) (*apiClient, error) {
 	endpoint := defaultEndpoint
+	token := defaultToken
 	if len(creds) > 0 {
 		var c providerCredentials
 		if err := json.Unmarshal(creds, &c); err != nil {
@@ -67,9 +74,13 @@ func newAPIClient(creds []byte) (*apiClient, error) {
 		if c.Endpoint != "" {
 			endpoint = c.Endpoint
 		}
+		if c.Token != "" {
+			token = c.Token
+		}
 	}
 	return &apiClient{
 		baseURL: strings.TrimRight(endpoint, "/"),
+		token:   token,
 		http:    &http.Client{Timeout: 10 * time.Second},
 	}, nil
 }
@@ -90,6 +101,9 @@ func (c *apiClient) do(ctx context.Context, method, path string, body any) (*htt
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	return c.http.Do(req)
 }

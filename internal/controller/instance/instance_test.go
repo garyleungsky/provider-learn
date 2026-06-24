@@ -34,8 +34,12 @@ import (
 // client end to end. The mock server lives in a separate Go module and so is
 // reproduced here rather than imported.
 
+// testToken is the static bearer token the test server requires, mirroring the
+// mock-apiserver's auth.
+const testToken = "test-token"
+
 // newTestServer returns a server backed by an in-memory store mirroring the
-// mock-apiserver contract.
+// mock-apiserver contract, including its static bearer-token auth.
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := map[string]apiInstance{}
@@ -79,7 +83,14 @@ func newTestServer(t *testing.T) *httptest.Server {
 		}
 	})
 
-	return httptest.NewServer(mux)
+	authed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") != testToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+	return httptest.NewServer(authed)
 }
 
 func instanceWith(externalName, configurable string) *v1alpha1.Instance {
@@ -95,7 +106,7 @@ func TestExternalLifecycle(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
-	e := &external{client: &apiClient{baseURL: srv.URL, http: srv.Client()}}
+	e := &external{client: &apiClient{baseURL: srv.URL, token: testToken, http: srv.Client()}}
 	ctx := context.Background()
 	cr := instanceWith("db1", "small")
 
@@ -142,6 +153,18 @@ func TestExternalLifecycle(t *testing.T) {
 	}
 	if obs, _ := e.Observe(ctx, cr); obs.ResourceExists {
 		t.Fatalf("Observe(after delete): want ResourceExists=false")
+	}
+}
+
+// TestObserveUnauthorized verifies that a wrong bearer token surfaces as an
+// error (the server replies 401, which is outside the Observe contract).
+func TestObserveUnauthorized(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	e := &external{client: &apiClient{baseURL: srv.URL, token: "wrong-token", http: srv.Client()}}
+	if _, err := e.Observe(context.Background(), instanceWith("db1", "small")); err == nil {
+		t.Fatalf("Observe with bad token: want error, got nil")
 	}
 }
 
