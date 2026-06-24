@@ -783,3 +783,80 @@ One quality-of-life change made this painless: the example secret
 readable `stringData` holding the JSON creds. Kubernetes base64-encodes
 `stringData` on write, so the in-cluster Secret is identical, but the manifest is
 now self-documenting and the old manual override step is gone.
+
+## Step 16: running for real — the provider as an in-cluster Provider
+
+Everything so far ran the controller out-of-cluster (`make run` / `go run`),
+which never touches packaging, RBAC, or the runtime config. The "real" path
+installs the provider as a Crossplane `Provider` package — a Pod managed by
+Crossplane core. Validating that end-to-end (against Crossplane v2.3.3 in `kind`)
+surfaced four things the older docs/build recipe got wrong on v2, plus one
+genuinely subtle failure. The corrected, working sequence is now written up in
+`hack/TESTING-IN-CLUSTER.md`; this is the *why*.
+
+**Registry-free install via cache injection.** Rather than stand up an OCI
+registry, you inject the package straight into Crossplane's `package-cache`
+volume and set `packagePullPolicy: Never`. The mechanism: patch a throwaway
+`alpine` dev sidecar into the crossplane deployment sharing that volume, then
+`crossplane xpkg extract` the `.xpkg` and `kubectl cp` it in. Two gotchas here:
+`/tmp/cache` is the volume *mountpoint* (you can't `rm` the dir, only its
+contents), and the core container is **distroless** — no shell, no `ls` — so you
+verify the copy from the sidecar, not the core container.
+
+**Finding 1 — v2 rejects bare `.gz` package names.** The vendored
+`build/makelib/local.xpkg.mk` (and my first draft of the guide) set
+`spec.package: provider-learn-<version>.gz`. Crossplane v2.3.3 refuses it:
+`spec.package … must be a fully qualified image name`. v2 wants an OCI reference.
+
+**Finding 2 — the cache key is the FriendlyID.** With `Never`, Crossplane looks
+up the cache by the package's *FriendlyID*, not a filename you choose:
+```
+FriendlyID = ToDNSLabel( trunc(source,50) + "-" + trunc(digest,12) )
+```
+For a local install the source is `xpkg.crossplane.internal/dev/<pkgname>` and
+the digest is a fixed placeholder `sha256:0…0`. The current `crossplane/build`
+recipe writes the cache under *two* keys — `source@digest.gz` and
+`FriendlyID.gz` — so both v2.x cache lookups resolve. `<pkgname>` is the `.xpkg`
+basename with its `-vX.Y.Z…` version suffix stripped. With the package field set
+to `xpkg.crossplane.internal/dev/provider-learn@sha256:0…0`, the Provider went
+`INSTALLED=True HEALTHY=True`.
+
+**Finding 3 — `:latest` needs `IfNotPresent`.** `kind load` tags the runtime
+image `:latest`, which defaults `imagePullPolicy` to `Always`; the runtime pod
+then tries (and fails) to pull from docker.io. The fix is
+`imagePullPolicy: IfNotPresent` in the `DeploymentRuntimeConfig`.
+
+**Finding 4 (the subtle one) — the gated start needs CRD-read RBAC.** The
+Provider went `Healthy` and the pod ran, but the Instance just sat there:
+no `READY`, no `SYNCED`, **no events**. The log explained it:
+```
+cannot list resource "customresourcedefinitions" … forbidden
+```
+The provider uses crossplane-runtime's `SetupGated`: a `crd-gate` controller
+waits for the `Instance` CRD to be *established* before starting the managed
+reconciler. Crossplane's rbac-manager grants the provider its own CRs and core
+resources — but **not** CRD read access — so the gate can never observe the CRD
+and the Instance controller never starts. The lesson: `Provider … Healthy` only
+means *the package installed*; it says nothing about whether reconcilers are
+running. Watch the pod log. The fix is a small ClusterRole granting
+`get/list/watch` on `customresourcedefinitions`, bound to the provider SA, then
+restart the provider pod so the gate re-evaluates. Immediately after:
+```
+gvk is ready  {"gvk":"…Kind=Instance"}
+Starting Controller  {"controllerKind":"Instance"}
+Successfully requested creation of external resource
+```
+
+**The payoff — host networking from inside the cluster.** The controller now
+runs in `kind`, so `localhost` is the Pod, not the host. The creds endpoint
+becomes `http://host.docker.internal:8088` (Docker Desktop's host alias; on plain
+Linux use the bridge IP). Verified a debug pod could reach the host mock at that
+alias *before* installing, then watched the real run drive the full lifecycle,
+authenticated, with zero 401s:
+```
+GET 404  ->  POST 201  ->  GET 200 (x3)      create + observe
+GET 200  ->  DELETE 204 ->  GET 404          delete + confirm gone
+```
+`READY=True / SYNCED=True`, `atProvider.observableField =
+example-instance.instances.mock.local`. Same lifecycle as out-of-cluster — but
+now through the package, the runtime image, RBAC, and host networking.
