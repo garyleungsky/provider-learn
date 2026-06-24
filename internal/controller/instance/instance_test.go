@@ -18,58 +18,138 @@ package instance
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-
-	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
-	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/meta"
 
 	v1alpha1 "github.com/garyleungsky/provider-learn/apis/database/v1alpha1"
 )
 
-// Unlike many Kubernetes projects Crossplane does not use third party testing
-// libraries, per the common Go test review comments. Crossplane encourages the
-// use of table driven unit tests. The tests of the crossplane-runtime project
-// are representative of the testing style Crossplane encourages.
-//
-// https://github.com/golang/go/wiki/TestComments
-// https://github.com/crossplane/crossplane/blob/master/CONTRIBUTING.md#contributing-code
+// These tests stand up an httptest.Server that mimics hack/mock-apiserver's
+// /v1/instances contract, so the controller is exercised against the real HTTP
+// client end to end. The mock server lives in a separate Go module and so is
+// reproduced here rather than imported.
 
-func TestObserve(t *testing.T) {
-	type fields struct {
-		service interface{}
-	}
+// newTestServer returns a server backed by an in-memory store mirroring the
+// mock-apiserver contract.
+func newTestServer() *httptest.Server {
+	store := map[string]apiInstance{}
+	mux := http.NewServeMux()
 
-	type args struct {
-		ctx context.Context
-		cr  *v1alpha1.Instance
-	}
+	mux.HandleFunc("/v1/instances", func(w http.ResponseWriter, r *http.Request) {
+		var in apiInstance
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		if _, ok := store[in.Name]; ok {
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
+		in.ObservableField = in.Name + ".instances.mock.local"
+		store[in.Name] = in
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(in)
+	})
 
-	type want struct {
-		o   managed.ExternalObservation
-		err error
-	}
-
-	cases := map[string]struct {
-		reason string
-		fields fields
-		args   args
-		want   want
-	}{
-		// TODO: Add test cases.
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			e := external{service: tc.fields.service}
-			got, err := e.Observe(tc.args.ctx, tc.args.cr)
-			if diff := cmp.Diff(tc.want.err, err, test.EquateErrors()); diff != "" {
-				t.Errorf("\n%s\ne.Observe(...): -want error, +got error:\n%s\n", tc.reason, diff)
+	mux.HandleFunc("/v1/instances/", func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/v1/instances/")
+		existing, ok := store[name]
+		switch r.Method {
+		case http.MethodGet:
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
 			}
-			if diff := cmp.Diff(tc.want.o, got); diff != "" {
-				t.Errorf("\n%s\ne.Observe(...): -want, +got:\n%s\n", tc.reason, diff)
-			}
-		})
+			_ = json.NewEncoder(w).Encode(existing)
+		case http.MethodPut:
+			var in apiInstance
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			existing.ConfigurableField = in.ConfigurableField
+			store[name] = existing
+			_ = json.NewEncoder(w).Encode(existing)
+		case http.MethodDelete:
+			delete(store, name)
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	return httptest.NewServer(mux)
+}
+
+func instanceWith(externalName, configurable string) *v1alpha1.Instance {
+	cr := &v1alpha1.Instance{}
+	meta.SetExternalName(cr, externalName)
+	cr.Spec.ForProvider.ConfigurableField = configurable
+	return cr
+}
+
+// TestExternalLifecycle walks a managed resource through its full reconcile
+// lifecycle: absent -> Create -> up to date -> drift -> Update -> Delete.
+func TestExternalLifecycle(t *testing.T) {
+	srv := newTestServer()
+	defer srv.Close()
+
+	e := &external{client: &apiClient{baseURL: srv.URL, http: srv.Client()}}
+	ctx := context.Background()
+	cr := instanceWith("db1", "small")
+
+	// 1. Before creation, Observe reports the resource does not exist.
+	if obs, err := e.Observe(ctx, cr); err != nil || obs.ResourceExists {
+		t.Fatalf("Observe(absent): exists=%v err=%v", obs.ResourceExists, err)
+	}
+
+	// 2. Create provisions it; the server computes observableField.
+	creation, err := e.Create(ctx, cr)
+	if err != nil {
+		t.Fatalf("Create: unexpected error: %v", err)
+	}
+	if got := string(creation.ConnectionDetails["observableField"]); got != "db1.instances.mock.local" {
+		t.Fatalf("Create: observableField=%q", got)
+	}
+
+	// 3. Observe now finds it, up to date, and populates status.atProvider.
+	obs, err := e.Observe(ctx, cr)
+	if err != nil || !obs.ResourceExists || !obs.ResourceUpToDate {
+		t.Fatalf("Observe(present): exists=%v upToDate=%v err=%v", obs.ResourceExists, obs.ResourceUpToDate, err)
+	}
+	if cr.Status.AtProvider.ObservableField != "db1.instances.mock.local" {
+		t.Fatalf("status.atProvider.observableField=%q", cr.Status.AtProvider.ObservableField)
+	}
+
+	// 4. Changing the spec makes Observe report drift.
+	cr.Spec.ForProvider.ConfigurableField = "large"
+	if obs, _ := e.Observe(ctx, cr); obs.ResourceUpToDate {
+		t.Fatalf("Observe(drift): want ResourceUpToDate=false")
+	}
+
+	// 5. Update reconciles the drift.
+	if _, err := e.Update(ctx, cr); err != nil {
+		t.Fatalf("Update: unexpected error: %v", err)
+	}
+	if obs, _ := e.Observe(ctx, cr); !obs.ResourceUpToDate {
+		t.Fatalf("Observe(after update): want ResourceUpToDate=true")
+	}
+
+	// 6. Delete removes it; Observe reports it gone.
+	if _, err := e.Delete(ctx, cr); err != nil {
+		t.Fatalf("Delete: unexpected error: %v", err)
+	}
+	if obs, _ := e.Observe(ctx, cr); obs.ResourceExists {
+		t.Fatalf("Observe(after delete): want ResourceExists=false")
+	}
+}
+
+// TestObserveNoExternalName verifies Observe short-circuits (no HTTP call) when
+// the resource has no external name yet.
+func TestObserveNoExternalName(t *testing.T) {
+	e := &external{client: &apiClient{baseURL: "http://127.0.0.1:0"}}
+	obs, err := e.Observe(context.Background(), &v1alpha1.Instance{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if obs.ResourceExists {
+		t.Fatalf("want ResourceExists=false for empty external-name")
 	}
 }

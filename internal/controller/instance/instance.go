@@ -18,7 +18,6 @@ package instance
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/crossplane/crossplane-runtime/v2/pkg/feature"
 
@@ -26,9 +25,11 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	xpv1 "github.com/crossplane/crossplane-runtime/v2/apis/common/v1"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/errors"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/event"
+	"github.com/crossplane/crossplane-runtime/v2/pkg/meta"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/ratelimiter"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
@@ -45,13 +46,11 @@ const (
 	errGetCreds     = "cannot get credentials"
 
 	errNewClient = "cannot create new Service"
-)
 
-// A NoOpService does nothing.
-type NoOpService struct{}
-
-var (
-	newNoOpService = func(_ []byte) (interface{}, error) { return &NoOpService{}, nil }
+	errGet    = "cannot get instance"
+	errCreate = "cannot create instance"
+	errUpdate = "cannot update instance"
+	errDelete = "cannot delete instance"
 )
 
 // SetupGated adds a controller that reconciles Instance managed resources with safe-start support.
@@ -71,7 +70,7 @@ func Setup(mgr ctrl.Manager, o controller.Options) error {
 		managed.WithTypedExternalConnector[*v1alpha1.Instance](&connector{
 			kube:         mgr.GetClient(),
 			usage:        resource.NewProviderConfigUsageTracker(mgr.GetClient(), &apisv1alpha1.ProviderConfigUsage{}),
-			newServiceFn: newNoOpService}),
+			newServiceFn: newAPIClient}),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
 		managed.WithPollInterval(o.PollInterval),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
@@ -113,7 +112,7 @@ func Setup(mgr ctrl.Manager, o controller.Options) error {
 type connector struct {
 	kube         client.Client
 	usage        *resource.ProviderConfigUsageTracker
-	newServiceFn func(creds []byte) (interface{}, error)
+	newServiceFn func(creds []byte) (*apiClient, error)
 }
 
 // Connect typically produces an ExternalClient by:
@@ -156,64 +155,83 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.Instance) (managed
 		return nil, errors.Wrap(err, errNewClient)
 	}
 
-	return &external{service: svc}, nil
+	return &external{client: svc}, nil
 }
 
 // An ExternalClient observes, then either creates, updates, or deletes an
 // external resource to ensure it reflects the managed resource's desired state.
 type external struct {
-	// A 'client' used to connect to the external resource API. In practice this
-	// would be something like an AWS SDK client.
-	service interface{}
+	// client talks to the external instance API over HTTP.
+	client *apiClient
+}
+
+// connectionDetails returns the connection secret published for an instance.
+func connectionDetails(observableField string) managed.ConnectionDetails {
+	return managed.ConnectionDetails{"observableField": []byte(observableField)}
 }
 
 func (c *external) Observe(ctx context.Context, cr *v1alpha1.Instance) (managed.ExternalObservation, error) {
-	// These fmt statements should be removed in the real implementation.
-	fmt.Printf("Observing: %+v", cr)
+	// The external-name annotation (defaulted to metadata.name) is the
+	// instance's identity in the external API.
+	name := meta.GetExternalName(cr)
+	if name == "" {
+		return managed.ExternalObservation{ResourceExists: false}, nil
+	}
+
+	observed, found, err := c.client.Get(ctx, name)
+	if err != nil {
+		return managed.ExternalObservation{}, errors.Wrap(err, errGet)
+	}
+	if !found {
+		// A 404 tells the reconciler to call Create.
+		return managed.ExternalObservation{ResourceExists: false}, nil
+	}
+
+	// Reflect the observed external state into status.atProvider.
+	cr.Status.AtProvider.ConfigurableField = observed.ConfigurableField
+	cr.Status.AtProvider.ObservableField = observed.ObservableField
+	cr.SetConditions(xpv1.Available())
 
 	return managed.ExternalObservation{
-		// Return false when the external resource does not exist. This lets
-		// the managed resource reconciler know that it needs to call Create to
-		// (re)create the resource, or that it has successfully been deleted.
-		ResourceExists: true,
-
-		// Return false when the external resource exists, but it not up to date
-		// with the desired managed resource state. This lets the managed
-		// resource reconciler know that it needs to call Update.
-		ResourceUpToDate: true,
-
-		// Return any details that may be required to connect to the external
-		// resource. These will be stored as the connection secret.
-		ConnectionDetails: managed.ConnectionDetails{},
+		ResourceExists:    true,
+		ResourceUpToDate:  observed.ConfigurableField == cr.Spec.ForProvider.ConfigurableField,
+		ConnectionDetails: connectionDetails(observed.ObservableField),
 	}, nil
 }
 
 func (c *external) Create(ctx context.Context, cr *v1alpha1.Instance) (managed.ExternalCreation, error) {
-	fmt.Printf("Creating: %+v", cr)
+	cr.SetConditions(xpv1.Creating())
 
-	return managed.ExternalCreation{
-		// Optionally return any details that may be required to connect to the
-		// external resource. These will be stored as the connection secret.
-		ConnectionDetails: managed.ConnectionDetails{},
-	}, nil
+	created, err := c.client.Create(ctx, apiInstance{
+		Name:              meta.GetExternalName(cr),
+		ConfigurableField: cr.Spec.ForProvider.ConfigurableField,
+	})
+	if err != nil {
+		return managed.ExternalCreation{}, errors.Wrap(err, errCreate)
+	}
+
+	return managed.ExternalCreation{ConnectionDetails: connectionDetails(created.ObservableField)}, nil
 }
 
 func (c *external) Update(ctx context.Context, cr *v1alpha1.Instance) (managed.ExternalUpdate, error) {
-	fmt.Printf("Updating: %+v", cr)
+	updated, err := c.client.Update(ctx, meta.GetExternalName(cr), cr.Spec.ForProvider.ConfigurableField)
+	if err != nil {
+		return managed.ExternalUpdate{}, errors.Wrap(err, errUpdate)
+	}
 
-	return managed.ExternalUpdate{
-		// Optionally return any details that may be required to connect to the
-		// external resource. These will be stored as the connection secret.
-		ConnectionDetails: managed.ConnectionDetails{},
-	}, nil
+	return managed.ExternalUpdate{ConnectionDetails: connectionDetails(updated.ObservableField)}, nil
 }
 
 func (c *external) Delete(ctx context.Context, cr *v1alpha1.Instance) (managed.ExternalDelete, error) {
-	fmt.Printf("Deleting: %+v", cr)
+	cr.SetConditions(xpv1.Deleting())
+
+	if err := c.client.Delete(ctx, meta.GetExternalName(cr)); err != nil {
+		return managed.ExternalDelete{}, errors.Wrap(err, errDelete)
+	}
 
 	return managed.ExternalDelete{}, nil
 }
 
-func (c *external) Disconnect(ctx context.Context) error {
+func (c *external) Disconnect(_ context.Context) error {
 	return nil
 }
