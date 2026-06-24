@@ -9,8 +9,11 @@ metadata:
   namespace: default
   name: example-provider-secret
 type: Opaque
-data:
-  credentials: QkFTRTY0RU5DT0RFRF9QUk9WSURFUl9DUkVEUwo=
+# Credentials are JSON: the external API endpoint and the static bearer token.
+# These defaults target a locally running mock-apiserver (see hack/mock-apiserver)
+# for out-of-cluster development; replace with real values in production.
+stringData:
+  credentials: '{"endpoint":"http://localhost:8088","token":"mock-secret-token"}'
 ---
 apiVersion: learn.garyleungsky.io/v1alpha1
 kind: ProviderConfig
