@@ -496,3 +496,61 @@ exact commit.
 - `make build` = artifacts for shipping (target-platform binary, image, xpkg).
 - `make run`   = compile a **host** binary and run the controller out-of-cluster
   against the current kubeconfig (the fast dev loop we'll use shortly).
+
+## Step 12: a mock external API to manage
+
+Before writing the controller, we built the *thing the controller talks to* — a
+tiny REST API standing in for a real cloud service. Having it first means that
+when we implement Observe/Create/Update/Delete we have something concrete to call
+and can watch the exact HTTP traffic each reconcile generates.
+
+Location and layout (`hack/mock-apiserver/`):
+```
+main.go      server setup, instance/store types, JSON helpers, logging middleware
+handlers.go  /v1/instances (GET list, POST create) and /v1/instances/{name}
+             (GET, PUT, DELETE)
+go.mod       github.com/garyleungsky/provider-learn/hack/mock-apiserver
+```
+
+Why its **own** `go.mod` (a second module inside the repo): it keeps a throwaway
+dev tool's dependencies out of the provider's `go.mod`/`go.sum`. The provider
+must stay lean — only the deps it actually ships with. A nested module is its own
+universe; `go build ./...`, `make lint`, and `make reviewable` at the repo root
+never see it. (This one happens to be stdlib-only, so it has zero deps anyway,
+but the isolation principle holds the moment a tool needs a third-party import.)
+
+The API deliberately **mirrors the Instance CRD** so the controller mapping is
+one-to-one:
+- `configurableField` — client-settable  -> maps to `spec.forProvider`
+- `observableField`   — server-computed   -> maps to `status.atProvider`
+
+On POST the server "provisions" the resource and assigns `observableField`
+(`<name>.instances.mock.local`); PUT only lets you change `configurableField`.
+That is exactly how a real API behaves: you declare desired config, the system
+fills in computed/read-only attributes you observe later.
+
+REST contract (what the controller will rely on):
+```
+GET    /v1/instances           200  list all
+POST   /v1/instances           201  create (409 if name exists, 400 if no name)
+GET    /v1/instances/{name}    200  read   (404 if absent)  <- drives Observe
+PUT    /v1/instances/{name}    200  update configurableField (404 if absent)
+DELETE /v1/instances/{name}    204  delete (404 if absent)
+```
+The `404 on GET` is the important one: it's how Observe will decide "the external
+resource does not exist yet" and return `ResourceExists: false` so the reconciler
+calls Create.
+
+Logging middleware prints every exchange to stdout:
+```
+--> METHOD /path {request-body}
+<-- STATUS Text (latency) {response-body}
+```
+Verified with a full curl lifecycle (empty list -> 404 -> create -> read ->
+409 dup -> update -> read -> 204 delete -> 404), and the log showed each
+request/response pair as expected.
+
+Run it locally with:
+```
+cd hack/mock-apiserver && go run . -addr :8088
+```
