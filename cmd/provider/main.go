@@ -44,9 +44,9 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/crossplane/provider-learn/apis"
-	learn "github.com/crossplane/provider-learn/internal/controller"
-	"github.com/crossplane/provider-learn/internal/version"
+	"github.com/garyleungsky/provider-learn/apis"
+	learn "github.com/garyleungsky/provider-learn/internal/controller"
+	"github.com/garyleungsky/provider-learn/internal/version"
 )
 
 func main() {

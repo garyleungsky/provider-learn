@@ -20,8 +20,8 @@ package apis
 import (
 	"k8s.io/apimachinery/pkg/runtime"
 
-	samplev1alpha1 "github.com/crossplane/provider-learn/apis/sample/v1alpha1"
-	learnv1alpha1 "github.com/crossplane/provider-learn/apis/v1alpha1"
+	samplev1alpha1 "github.com/garyleungsky/provider-learn/apis/sample/v1alpha1"
+	learnv1alpha1 "github.com/garyleungsky/provider-learn/apis/v1alpha1"
 )
 
 func init() {

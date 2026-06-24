@@ -34,8 +34,8 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/statemetrics"
 
-	v1alpha1 "github.com/crossplane/provider-learn/apis/database/v1alpha1"
-	apisv1alpha1 "github.com/crossplane/provider-learn/apis/v1alpha1"
+	v1alpha1 "github.com/garyleungsky/provider-learn/apis/database/v1alpha1"
+	apisv1alpha1 "github.com/garyleungsky/provider-learn/apis/v1alpha1"
 )
 
 const (

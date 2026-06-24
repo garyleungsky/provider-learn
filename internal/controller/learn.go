@@ -20,8 +20,8 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/controller"
 	ctrl "sigs.k8s.io/controller-runtime"
 
-	"github.com/crossplane/provider-learn/internal/controller/config"
-	"github.com/crossplane/provider-learn/internal/controller/mytype"
+	"github.com/garyleungsky/provider-learn/internal/controller/config"
+	"github.com/garyleungsky/provider-learn/internal/controller/mytype"
 )
 
 // SetupGated creates all Learn controllers with safe-start support and adds them to

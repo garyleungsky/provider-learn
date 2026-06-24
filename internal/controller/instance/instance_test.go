@@ -25,7 +25,7 @@ import (
 	"github.com/crossplane/crossplane-runtime/v2/pkg/reconciler/managed"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/test"
 
-	v1alpha1 "github.com/crossplane/provider-learn/apis/database/v1alpha1"
+	v1alpha1 "github.com/garyleungsky/provider-learn/apis/database/v1alpha1"
 )
 
 // Unlike many Kubernetes projects Crossplane does not use third party testing

@@ -311,3 +311,29 @@ Deliberately left untouched:
 
 Why this is safe: crossplane-runtime's own `crossplane.io` references never carry
 the `learn.` prefix, so targeting `learn.crossplane.io` only touches our groups.
+
+## Step 8 done: fix Go module org -> `github.com/garyleungsky/provider-learn`
+
+`prepare` only changed `provider-template` -> `provider-learn`; it kept the
+`crossplane` org in the module path. Replaced
+`github.com/crossplane/provider-learn` -> `github.com/garyleungsky/provider-learn`
+everywhere except `hack/` (journal keeps the old path as a historical note):
+
+```
+go.mod  apis/learn.go  cmd/provider/main.go  internal/controller/learn.go
+internal/controller/config/config.go  internal/controller/instance/*.go
+package/crossplane.yaml  PROVIDER_CHECKLIST.md
+```
+
+zsh gotcha: `for f in $files` does **not** word-split an unquoted variable in zsh
+(unlike bash). Used `git grep -l ... | while IFS= read -r f` instead.
+
+`go build ./...` now still fails — but for an **unrelated, pre-existing** reason:
+the registration files reference the example packages `prepare` deleted:
+
+```
+apis/learn.go            -> apis/sample/v1alpha1        (deleted)
+internal/controller/learn.go -> internal/controller/mytype (deleted)
+```
+
+Fixed in the next step (wire up the `database`/`Instance` registration).
