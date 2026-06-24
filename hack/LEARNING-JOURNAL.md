@@ -714,3 +714,55 @@ debug log mirrored each transition (`CreatedExternalResource`,
   between observations — much better for *learning* what each call does.
 
 This is the milestone: scaffold -> build -> mock -> implement -> **verify**, closed.
+
+## Step 15: authenticating with a static bearer token
+
+Real external APIs don't take anonymous calls — they want credentials. The
+smallest realistic step up from "no auth" is a **static bearer token**: a secret
+string the client puts in the `Authorization` header and the server checks on
+every request. (No login flow, no expiry, no refresh — that comes later.)
+
+**Server side (mock-apiserver).** A new `auth` middleware wraps the API routes:
+```
+Authorization: Bearer <token>   ==  configured token   -> proceed
+                                !=                       -> 401 unauthorized
+```
+- The token is configurable via `-token` (default `mock-secret-token`).
+- `/healthz` is **exempt** — liveness/readiness probes must work without
+  credentials, otherwise an unauthenticated orchestrator would mark a healthy
+  server as down.
+- Middleware ordering is `logging(auth(mux))`: logging stays outermost so even
+  rejected (401) calls are recorded. Crucially the logging middleware logs only
+  method, path and body — **never headers** — so the token never lands in logs.
+
+**Client side.** The credential shape grew a field:
+```
+{"endpoint":"http://...","token":"..."}
+```
+`newAPIClient` parses both; `do` sets `Authorization: Bearer <token>` on every
+request. Both fields keep a default (`defaultEndpoint` / `defaultToken`) so a
+zero-config `make run` still works against a default-token mock — convenient for
+dev, while a real ProviderConfig secret can supply real values in production.
+
+**Why the token lives in the ProviderConfig secret.** This is the Crossplane
+pattern: secrets ride in a Kubernetes `Secret` referenced by the ProviderConfig,
+not in the managed resource spec or in code. Rotating the credential is then just
+updating the Secret.
+
+**Testing.** The in-memory test server gained the same bearer check, the
+lifecycle test passes the token, and a new `TestObserveUnauthorized` points a
+client with the wrong token at the server and asserts Observe returns an error
+(the 401 is outside the Observe contract, so it must surface, not be swallowed).
+
+**Gotcha — keep secrets out of logs/lint.** Two small lessons:
+- The mock's request logger deliberately omits headers; if you ever add header
+  logging, redact `Authorization`.
+- In the test, encoding a `map[string]string` error body tripped `errchkjson`
+  (it wants the encode error handled for map types). Since the 401 body is
+  irrelevant to the assertion, dropping the body and setting only the status was
+  the cleaner fix.
+
+**For the next integration run:** the creds Secret must now include the token,
+e.g. `{"endpoint":"http://localhost:8088","token":"mock-secret-token"}`. Omitting
+it falls back to `defaultToken`, which only authenticates against a mock started
+with that same default.
