@@ -337,3 +337,33 @@ internal/controller/learn.go -> internal/controller/mytype (deleted)
 ```
 
 Fixed in the next step (wire up the `database`/`Instance` registration).
+
+## Step 9 done: wire up registration (replace example refs)
+
+`prepare` renamed `internal/controller/register.go` -> `internal/controller/learn.go`
+(so there is **no** `register.go` to edit), but neither `prepare` nor `addtype`
+re-pointed the registration files away from the deleted example packages. Two
+hand-edits:
+
+```
+apis/learn.go:
+  - samplev1alpha1 (apis/sample/v1alpha1)  ->  databasev1alpha1 (apis/database/v1alpha1)
+  - AddToSchemes: register databasev1alpha1.SchemeBuilder.AddToScheme
+
+internal/controller/learn.go:
+  - import mytype  ->  import instance (internal/controller/instance)
+  - setup list:   mytype.SetupGated  ->  instance.SetupGated
+```
+
+These resolve the deleted-package build errors. `go build ./...` now fails only
+on:
+
+```
+*Instance / *InstanceList does not implement runtime.Object
+  (missing method DeepCopyObject)
+```
+
+That method is **generated** by `controller-gen` into `zz_generated.deepcopy.go`
+from the `+kubebuilder:object` markers. We produce it next via `make generate`
+(part of `make reviewable`). So the wiring itself is complete; the build goes
+green after codegen.

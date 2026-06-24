@@ -20,7 +20,7 @@ package apis
 import (
 	"k8s.io/apimachinery/pkg/runtime"
 
-	samplev1alpha1 "github.com/garyleungsky/provider-learn/apis/sample/v1alpha1"
+	databasev1alpha1 "github.com/garyleungsky/provider-learn/apis/database/v1alpha1"
 	learnv1alpha1 "github.com/garyleungsky/provider-learn/apis/v1alpha1"
 )
 
@@ -28,7 +28,7 @@ func init() {
 	// Register the types with the Scheme so the components can map objects to GroupVersionKinds and back
 	AddToSchemes = append(AddToSchemes,
 		learnv1alpha1.SchemeBuilder.AddToScheme,
-		samplev1alpha1.SchemeBuilder.AddToScheme,
+		databasev1alpha1.SchemeBuilder.AddToScheme,
 	)
 }
 

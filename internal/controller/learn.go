@@ -21,7 +21,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/garyleungsky/provider-learn/internal/controller/config"
-	"github.com/garyleungsky/provider-learn/internal/controller/mytype"
+	"github.com/garyleungsky/provider-learn/internal/controller/instance"
 )
 
 // SetupGated creates all Learn controllers with safe-start support and adds them to
@@ -29,7 +29,7 @@ import (
 func SetupGated(mgr ctrl.Manager, o controller.Options) error {
 	for _, setup := range []func(ctrl.Manager, controller.Options) error{
 		config.Setup,
-		mytype.SetupGated,
+		instance.SetupGated,
 	} {
 		if err := setup(mgr, o); err != nil {
 			return err
