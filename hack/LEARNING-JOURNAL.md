@@ -127,6 +127,15 @@ git add hack/LEARNING-JOURNAL.md
 git commit -m "docs: add learning journal for provider development"
 ```
 
+### 4. Initialize the build submodule
+
+Required before any `make` target works (the Makefile does
+`-include build/makelib/*.mk`).
+
+```bash
+make submodules            # clones crossplane/build -> ./build (pinned b964dbe)
+```
+
 ## Next steps (planned)
 
 ```bash
