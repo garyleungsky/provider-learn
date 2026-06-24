@@ -1,0 +1,11 @@
+apiVersion: database.learn.garyleungsky.io/v1alpha1
+kind: Instance
+metadata:
+  name: example-instance
+  namespace: default
+spec:
+  forProvider:
+    configurableField: small
+  providerConfigRef:
+    kind: ProviderConfig
+    name: example
