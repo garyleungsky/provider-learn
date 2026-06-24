@@ -464,3 +464,35 @@ Two practical notes:
 - **They are committed to git on purpose.** Even though generated, checking them
   in means anyone running `go build` (or importing the module) needs no codegen
   toolchain — standard Go practice.
+
+## Step 11 done: `make build`
+
+Produced three artifacts (all under `_output/`, which is gitignored — a build
+never dirties the tree):
+
+```
+binary   _output/bin/linux_arm64/provider                       42M  static ELF, ARM64, stripped
+image    build-<hash>/provider-learn-arm64:latest                45.8MB
+package  _output/xpkg/linux_arm64/provider-learn-v0.0.0-14.gd282cb0.xpkg  15M
+```
+
+What happened, in order:
+1. **Cross-compiled** a `linux/arm64` provider binary (`cmd/provider`) — static,
+   stripped. `make build` builds for the target platform(s) in `PLATFORMS`, not
+   the host; for local dev we use `make run` (host binary) later.
+2. **Docker image**: `ADD bin/linux_arm64/provider` into a `distroless/static`
+   base at `/usr/local/bin/crossplane-learn-provider`. Distroless = no shell, no
+   package manager, just libc + the binary => tiny, minimal attack surface. This
+   is the image a provider ships as.
+3. **xpkg**: packaged the image + the CRDs from `package/crds` + `package/
+   crossplane.yaml` into a Crossplane package (`.xpkg`, an OCI artifact). This is
+   the unit you'd `crossplane xpkg push` / install into a control plane.
+
+Version string `v0.0.0-14.gd282cb0` is `git describe`-style: `0.0.0` (no tags
+yet) + `14` commits + short SHA `d282cb0`, so every package is traceable to an
+exact commit.
+
+`make build` vs `make run`:
+- `make build` = artifacts for shipping (target-platform binary, image, xpkg).
+- `make run`   = compile a **host** binary and run the controller out-of-cluster
+  against the current kubeconfig (the fast dev loop we'll use shortly).
