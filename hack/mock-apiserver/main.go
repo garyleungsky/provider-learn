@@ -33,6 +33,7 @@ type store struct {
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
+	token := flag.String("token", "mock-secret-token", "static bearer token required for API calls")
 	flag.Parse()
 
 	s := &store{instances: map[string]instance{}}
@@ -45,7 +46,25 @@ func main() {
 	})
 
 	log.Printf("mock-apiserver listening on %s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, logging(mux)))
+	log.Fatal(http.ListenAndServe(*addr, logging(auth(*token, mux))))
+}
+
+// auth rejects requests that don't present the required static bearer token in
+// the Authorization header. /healthz is exempt so liveness checks need no
+// credentials. The token itself is never logged (the logging middleware records
+// only method, path and body).
+func auth(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") != token {
+			writeJSON(w, http.StatusUnauthorized, errBody("unauthorized"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
