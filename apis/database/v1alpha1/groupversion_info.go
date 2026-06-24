@@ -16,7 +16,7 @@ limitations under the License.
 
 // Package v1alpha1 contains the v1alpha1 group Sample resources of the Learn provider.
 // +kubebuilder:object:generate=true
-// +groupName=database.learn.crossplane.io
+// +groupName=database.learn.garyleungsky.io
 // +versionName=v1alpha1
 package v1alpha1
 
@@ -27,7 +27,7 @@ import (
 
 // Package type metadata.
 const (
-	Group   = "database.learn.crossplane.io"
+	Group   = "database.learn.garyleungsky.io"
 	Version = "v1alpha1"
 )
 

@@ -289,3 +289,25 @@ What `instance.go` gives us (the bits we'll replace):
 Important: `addtype` generates files but does **not** wire them in. Still pending:
 - `apis/learn.go`            — add the `database` group to `AddToSchemes`.
 - `internal/controller/learn.go` — call `instance.SetupGated` in `SetupGated`.
+
+## Step 7 done: custom domain `learn.crossplane.io` -> `learn.garyleungsky.io`
+
+Changed only the **source-of-truth** API group declarations (hand-edited):
+
+```
+apis/v1alpha1/doc.go                       // +groupName marker (core group)
+apis/v1alpha1/register.go                  // Group const (core group)
+apis/database/v1alpha1/groupversion_info.go// +groupName marker + Group const
+examples/provider/config.yaml              // ProviderConfig/ClusterProviderConfig apiVersion
+```
+
+Deliberately left untouched:
+- `package/crds/*.yaml` — these are **generated**; `make generate`/`make
+  reviewable` will regenerate them from the markers above (do not hand-edit).
+- `examples/sample/mytype.yaml` — stale leftover from the template example,
+  removed in a later cleanup.
+- SPDX/`zz_generated` `crossplane.io` refs — those are the Crossplane Authors
+  copyright URL, not our API group.
+
+Why this is safe: crossplane-runtime's own `crossplane.io` references never carry
+the `learn.` prefix, so targeting `learn.crossplane.io` only touches our groups.

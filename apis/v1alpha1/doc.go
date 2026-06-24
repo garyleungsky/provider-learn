@@ -16,6 +16,6 @@ limitations under the License.
 
 // Package v1alpha1 contains the core resources of the Learn provider.
 // +kubebuilder:object:generate=true
-// +groupName=learn.crossplane.io
+// +groupName=learn.garyleungsky.io
 // +versionName=v1alpha1
 package v1alpha1
