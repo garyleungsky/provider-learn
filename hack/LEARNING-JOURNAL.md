@@ -634,3 +634,28 @@ pass). One incidental change: `go mod tidy` moved `go-cmp` from a direct to an
 indirect dependency, because the old generated test (which used `cmp.Diff`) was
 replaced — go-cmp is still pulled in transitively, just no longer imported by us
 directly.
+
+### A note on naming: "service" -> "client"
+
+The template scaffolds the external dependency with generic *service* names: a
+`NoOpService` type, a `newServiceFn` factory on the connector, and an error
+string `"cannot create new Service"`. These are placeholders — the template's own
+comment even says it "would be something like an AWS SDK client".
+
+We standardised on **client** throughout:
+```
+NoOpService / newNoOpService  -> apiClient / newAPIClient   (step 13)
+newServiceFn                  -> newClientFn
+svc (local var in Connect)    -> client
+"cannot create new Service"   -> "cannot create API client"
+```
+Rationale: in networking the object that makes *outbound* calls to a remote API
+is conventionally the **client** (vs the server it talks to). Our type literally
+wraps Go's `http.Client`, and the Crossplane interface we implement is
+`ExternalClient` — so "client" matches both Go convention and Crossplane's own
+vocabulary. A "service" would more naturally name the remote thing itself (here,
+the mock-apiserver), not the object that calls it.
+
+Lesson: when renaming a struct field, run `gofmt` — shortening `newServiceFn` to
+`newClientFn` changed the alignment of the surrounding struct literal, which the
+linter flagged as a gofmt diff until reformatted.
