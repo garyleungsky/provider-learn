@@ -766,3 +766,20 @@ client with the wrong token at the server and asserts Observe returns an error
 e.g. `{"endpoint":"http://localhost:8088","token":"mock-secret-token"}`. Omitting
 it falls back to `defaultToken`, which only authenticates against a mock started
 with that same default.
+
+**Closing the loop (re-run, authenticated).** Ran the full out-of-cluster loop
+again with the token-bearing creds and saw the whole lifecycle fire with zero
+401s:
+```
+GET 404  ->  POST 201  ->  GET 200 (x2)      create + observe
+GET 200  ->  DELETE 204 ->  GET 404 (xN)     delete + confirm gone
+```
+`READY=True / SYNCED=True`, and `atProvider` carried the server-computed
+`observableField` (`example-instance.instances.mock.local`). The token flowed
+end-to-end: Secret -> `Connect` -> `apiClient` -> `Authorization: Bearer`.
+
+One quality-of-life change made this painless: the example secret
+(`examples/provider/config.yaml`) moved from an opaque base64 `data` blob to
+readable `stringData` holding the JSON creds. Kubernetes base64-encodes
+`stringData` on write, so the in-cluster Secret is identical, but the manifest is
+now self-documenting and the old manual override step is gone.
