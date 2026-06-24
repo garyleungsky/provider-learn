@@ -36,7 +36,8 @@ import (
 
 // newTestServer returns a server backed by an in-memory store mirroring the
 // mock-apiserver contract.
-func newTestServer() *httptest.Server {
+func newTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
 	store := map[string]apiInstance{}
 	mux := http.NewServeMux()
 
@@ -66,6 +67,9 @@ func newTestServer() *httptest.Server {
 		case http.MethodPut:
 			var in apiInstance
 			_ = json.NewDecoder(r.Body).Decode(&in)
+			if in.Name != name {
+				t.Errorf("PUT body name = %q, want %q", in.Name, name)
+			}
 			existing.ConfigurableField = in.ConfigurableField
 			store[name] = existing
 			_ = json.NewEncoder(w).Encode(existing)
@@ -88,7 +92,7 @@ func instanceWith(externalName, configurable string) *v1alpha1.Instance {
 // TestExternalLifecycle walks a managed resource through its full reconcile
 // lifecycle: absent -> Create -> up to date -> drift -> Update -> Delete.
 func TestExternalLifecycle(t *testing.T) {
-	srv := newTestServer()
+	srv := newTestServer(t)
 	defer srv.Close()
 
 	e := &external{client: &apiClient{baseURL: srv.URL, http: srv.Client()}}

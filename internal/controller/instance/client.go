@@ -130,9 +130,11 @@ func (c *apiClient) Create(ctx context.Context, in apiInstance) (*apiInstance, e
 	return out, json.NewDecoder(resp.Body).Decode(out)
 }
 
-// Update changes the mutable ConfigurableField of an existing instance.
+// Update changes the mutable ConfigurableField of an existing instance. Name is
+// sent in the body too (as well as the path) so the request is correct against
+// APIs that identify the resource from the payload rather than the URL.
 func (c *apiClient) Update(ctx context.Context, name, configurableField string) (*apiInstance, error) {
-	resp, err := c.do(ctx, http.MethodPut, "/v1/instances/"+name, apiInstance{ConfigurableField: configurableField})
+	resp, err := c.do(ctx, http.MethodPut, "/v1/instances/"+name, apiInstance{Name: name, ConfigurableField: configurableField})
 	if err != nil {
 		return nil, err
 	}
