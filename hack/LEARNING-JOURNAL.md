@@ -554,3 +554,83 @@ Run it locally with:
 ```
 cd hack/mock-apiserver && go run . -addr :8088
 ```
+
+## Step 13: implement the ExternalClient (the heart of the provider)
+
+This is where the provider stops being scaffolding and starts *doing* something.
+A Crossplane managed-resource controller is generic: the crossplane-runtime
+reconciler owns the control loop (watch, finalizers, conditions, requeue). Our
+job is to fill in one small interface, `ExternalClient`, that maps the desired
+state of an `Instance` onto the external system. We implemented it against the
+mock API from step 12.
+
+Two new/changed files in `internal/controller/instance/`:
+```
+client.go    NEW  — apiClient: HTTP wrapper over /v1/instances
+instance.go  EDIT — Observe/Create/Update/Delete call the client
+```
+
+**The reconcile contract** (what each method must tell the reconciler):
+```
+Observe → does the external resource exist? is it up to date?
+            ResourceExists:false   -> runtime calls Create
+            ResourceExists:true +
+              ResourceUpToDate:false -> runtime calls Update
+            ResourceUpToDate:true    -> nothing to do
+Create  → make it exist
+Update  → make it match spec.forProvider
+Delete  → make it gone (called when the MR is deleted)
+```
+The runtime, not us, decides *which* method to call; we only report truthfully in
+Observe and act in the others. This is the key mental model of Crossplane.
+
+**Identity: the external-name annotation.** `meta.GetExternalName(cr)` is the
+resource's identity in the external API. By default the runtime sets it to the
+MR's `metadata.name` before Observe runs, so it's always populated. Every method
+keys off this name.
+
+**Observe in detail:**
+- `GET /v1/instances/{name}`.
+- A **404 -> `ResourceExists:false`** — this single mapping is what makes the
+  whole loop work; it's how the runtime learns it must Create.
+- 200 -> copy `configurableField`/`observableField` into `status.atProvider`, set
+  the `Available` condition, and compute `ResourceUpToDate` by comparing the
+  observed `configurableField` to `spec.forProvider.configurableField`. If they
+  differ, the runtime calls Update.
+- `observableField` (server-computed) is also returned as a **connection detail**
+  — the provider's way of publishing useful outputs to a secret.
+
+**Create/Update/Delete:** POST / PUT / DELETE respectively. Create and Delete set
+the `Creating` / `Deleting` conditions so users see lifecycle status via
+`kubectl`. Update only sends `configurableField` (the one mutable field).
+
+**Where the endpoint comes from.** The template already plumbs ProviderConfig ->
+credentials -> `[]byte` into a `newServiceFn`. We replaced the no-op
+`NoOpService` with `newAPIClient`, which parses the creds as
+`{"endpoint":"http://..."}` and falls back to `http://localhost:8088` when empty
+— so it works against the local mock with zero config, but a real endpoint can be
+supplied via a ProviderConfig secret later.
+
+**Testing without a real backend (`instance_test.go`).** Crossplane's own style is
+table-driven tests with no external deps. Here we stand up an
+`httptest.Server` that re-implements the mock's `/v1/instances` contract
+in-memory, point an `apiClient` at `srv.URL`, and drive the **full lifecycle**
+through the real HTTP client:
+```
+Observe(absent)    -> ResourceExists:false
+Create             -> observableField published
+Observe(present)   -> exists + up to date, status populated
+spec change        -> Observe reports ResourceUpToDate:false (drift)
+Update             -> Observe reports up to date again
+Delete             -> Observe reports gone
+```
+Plus a guard test that Observe makes no HTTP call when external-name is empty.
+The mock-apiserver lives in a *separate Go module*, so it can't be imported into
+the provider's tests — re-creating the tiny contract in the test is the clean
+way to keep the test self-contained and dependency-free.
+
+`make reviewable` stays green (generate -> no diff, lint 0 issues, unit tests
+pass). One incidental change: `go mod tidy` moved `go-cmp` from a direct to an
+indirect dependency, because the old generated test (which used `cmp.Diff`) was
+replaced — go-cmp is still pulled in transitively, just no longer imported by us
+directly.
