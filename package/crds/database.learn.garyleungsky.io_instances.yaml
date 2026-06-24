@@ -4,18 +4,18 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.18.0
-  name: mytypes.sample.learn.crossplane.io
+  name: instances.database.learn.garyleungsky.io
 spec:
-  group: sample.learn.crossplane.io
+  group: database.learn.garyleungsky.io
   names:
     categories:
     - crossplane
     - managed
     - learn
-    kind: MyType
-    listKind: MyTypeList
-    plural: mytypes
-    singular: mytype
+    kind: Instance
+    listKind: InstanceList
+    plural: instances
+    singular: instance
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
@@ -34,7 +34,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: A MyType is an example API type.
+        description: A Instance is an example API type.
         properties:
           apiVersion:
             description: |-
@@ -54,10 +54,10 @@ spec:
           metadata:
             type: object
           spec:
-            description: A MyTypeSpec defines the desired state of a MyType.
+            description: A InstanceSpec defines the desired state of a Instance.
             properties:
               forProvider:
-                description: MyTypeParameters are the configurable fields of a MyType.
+                description: InstanceParameters are the configurable fields of a Instance.
                 properties:
                   configurableField:
                     type: string
@@ -123,10 +123,10 @@ spec:
             - forProvider
             type: object
           status:
-            description: A MyTypeStatus represents the observed state of a MyType.
+            description: A InstanceStatus represents the observed state of a Instance.
             properties:
               atProvider:
-                description: MyTypeObservation are the observable fields of a MyType.
+                description: InstanceObservation are the observable fields of a Instance.
                 properties:
                   configurableField:
                     type: string
