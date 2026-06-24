@@ -45,7 +45,7 @@ const (
 	errGetCPC       = "cannot get ClusterProviderConfig"
 	errGetCreds     = "cannot get credentials"
 
-	errNewClient = "cannot create new Service"
+	errNewClient = "cannot create API client"
 
 	errGet    = "cannot get instance"
 	errCreate = "cannot create instance"
@@ -68,9 +68,9 @@ func Setup(mgr ctrl.Manager, o controller.Options) error {
 
 	opts := []managed.ReconcilerOption{
 		managed.WithTypedExternalConnector[*v1alpha1.Instance](&connector{
-			kube:         mgr.GetClient(),
-			usage:        resource.NewProviderConfigUsageTracker(mgr.GetClient(), &apisv1alpha1.ProviderConfigUsage{}),
-			newServiceFn: newAPIClient}),
+			kube:        mgr.GetClient(),
+			usage:       resource.NewProviderConfigUsageTracker(mgr.GetClient(), &apisv1alpha1.ProviderConfigUsage{}),
+			newClientFn: newAPIClient}),
 		managed.WithLogger(o.Logger.WithValues("controller", name)),
 		managed.WithPollInterval(o.PollInterval),
 		managed.WithRecorder(event.NewAPIRecorder(mgr.GetEventRecorderFor(name))),
@@ -110,9 +110,9 @@ func Setup(mgr ctrl.Manager, o controller.Options) error {
 // A connector is expected to produce an ExternalClient when its Connect method
 // is called.
 type connector struct {
-	kube         client.Client
-	usage        *resource.ProviderConfigUsageTracker
-	newServiceFn func(creds []byte) (*apiClient, error)
+	kube        client.Client
+	usage       *resource.ProviderConfigUsageTracker
+	newClientFn func(creds []byte) (*apiClient, error)
 }
 
 // Connect typically produces an ExternalClient by:
@@ -150,12 +150,12 @@ func (c *connector) Connect(ctx context.Context, cr *v1alpha1.Instance) (managed
 		return nil, errors.Wrap(err, errGetCreds)
 	}
 
-	svc, err := c.newServiceFn(data)
+	client, err := c.newClientFn(data)
 	if err != nil {
 		return nil, errors.Wrap(err, errNewClient)
 	}
 
-	return &external{client: svc}, nil
+	return &external{client: client}, nil
 }
 
 // An ExternalClient observes, then either creates, updates, or deletes an
