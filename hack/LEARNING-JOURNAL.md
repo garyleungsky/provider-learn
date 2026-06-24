@@ -29,6 +29,51 @@ while remaining version-controlled (see "Gotcha" below).
 - The base domain is just a namespacing string — it does NOT need to be a domain
   you own / it is never resolved via DNS.
 
+## Testing architecture (provider <-> Go API server)
+
+Goal: watch the HTTP request/response between the provider and a Go-written API
+server during testing.
+
+A provider has TWO connections:
+
+```
+  Kubernetes API  <-- watches/updates CRs --  Provider (controller)  -- HTTP -->  Go API server
+  (stores CRDs/MRs)                            Observe/Create/Update/Delete        (external API)
+```
+
+Key point: in local dev the provider runs OUT-OF-CLUSTER (on the host), so it can
+reach the API server at `http://localhost:PORT` directly.
+
+| Test level                       | kind cluster? | API server location        |
+| -------------------------------- | ------------- | -------------------------- |
+| Unit (instance_test.go)          | No            | `httptest.Server` (in-proc) |
+| Local run (`make run`/`make dev`)| Yes (for CRs) | host `localhost:PORT`       |
+| Full in-cluster E2E              | Yes           | in-cluster Service / host.docker.internal |
+
+Decisions:
+- API server does NOT need to live in the kind cluster (provider runs on host).
+- Best req/resp visibility: unit tests with `httptest`; live loop with `make run`.
+- Build our OWN Go API server (in-memory CRUD) for testing.
+- Location: `hack/mock-apiserver/` (own go.mod, stdlib net/http). hack/** is
+  excluded from `make provider.prepare`, so it is safe even if prepare re-runs.
+- Ordering: scaffold the provider (incl. `prepare`) FIRST, then build the server.
+  `prepare` is a ONCE-ONLY step; never run it after adding custom code.
+
+Recommended live loop:
+
+```bash
+# terminal 1: run the Go API server (logs each request/response), e.g. :8080
+# terminal 2:
+make run
+# terminal 3:
+kubectl apply -f examples/.../instance.yaml
+kubectl get instance.database.learn.garyleungsky.io -w
+```
+
+The HTTP calls live in the Instance controller's ExternalClient
+(`internal/controller/instance/instance.go`): Observe/Create/Update/Delete will
+call the Go API server's endpoints. The base URL/creds come from ProviderConfig.
+
 ## Prerequisites (already installed on this machine)
 
 ```
