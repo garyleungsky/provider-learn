@@ -40,9 +40,9 @@ import (
 
 const (
 	errTrackPCUsage = "cannot track ProviderConfig usage"
-	errGetPC    = "cannot get ProviderConfig"
-	errGetCPC   = "cannot get ClusterProviderConfig"
-	errGetCreds = "cannot get credentials"
+	errGetPC        = "cannot get ProviderConfig"
+	errGetCPC       = "cannot get ClusterProviderConfig"
+	errGetCreds     = "cannot get credentials"
 
 	errNewClient = "cannot create new Service"
 )

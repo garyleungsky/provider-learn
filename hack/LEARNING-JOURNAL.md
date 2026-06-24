@@ -367,3 +367,57 @@ That method is **generated** by `controller-gen` into `zz_generated.deepcopy.go`
 from the `+kubebuilder:object` markers. We produce it next via `make generate`
 (part of `make reviewable`). So the wiring itself is complete; the build goes
 green after codegen.
+
+## Step 10: generate, lint, test
+
+### 10a. The Makefile module-org miss
+
+First `make generate` printed warnings and changed nothing:
+
+```
+go: warning: "github.com/crossplane/provider-learn/cmd/..." matched no packages
+```
+
+Cause: the module-org sed in Step 8 only matched the **literal**
+`github.com/crossplane/provider-learn`, but the Makefile builds the path from a
+variable:
+
+```make
+PROJECT_REPO := github.com/crossplane/$(PROJECT_NAME)   # PROJECT_NAME=provider-learn
+```
+
+So `GO_PROJECT` still pointed at the `crossplane` org, the `go generate` package
+patterns matched nothing, and codegen silently no-op'd. Fixed line 4 ->
+`github.com/garyleungsky/$(PROJECT_NAME)`. Lesson: when renaming, also grep for
+the **composed** form, not just the full literal.
+
+### 10b. `make generate` (controller-gen + angryjet)
+
+After the fix, generate:
+- removed the stale template/sample CRDs (`apis/generate.go` runs
+  `rm -rf ../package/crds` first, then regenerates);
+- wrote new CRDs at the correct domain, incl.
+  `package/crds/database.learn.garyleungsky.io_instances.yaml`;
+- generated `zz_generated.deepcopy.go` (DeepCopyObject), plus
+  `zz_generated.managed.go` / `zz_generated.managedlist.go` (angryjet adds the
+  `resource.Managed` accessor methods). `go build ./...` is now green.
+
+Also removed the dead `examples/sample/mytype.yaml` (referenced the deleted
+`MyType` and old domain).
+
+### 10c. golangci-lint vs go1.26
+
+`make lint` initially **panicked**:
+
+```
+panic: file requires newer Go version go1.26 (application built with go1.24)
+```
+
+The pinned `golangci-lint 2.1.2` prebuilt binary embeds go1.24's type-checker and
+can't parse the go1.26 std library (local Go is 1.26.4). golangci-lint added
+go1.26 support in **v2.9.0** (Feb 2026). Bumped the Makefile pin
+`GOLANGCILINT_VERSION = 2.1.2 -> 2.12.2` (latest). Lint then ran and reported one
+real issue — a gofmt `=`-alignment in the scaffolded `instance.go` const block;
+`gofmt -w` fixed it. `make lint` => `0 issues`.
+
+`go test ./...` passes (the scaffolded `instance_test.go` is the only test).
