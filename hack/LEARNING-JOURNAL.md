@@ -136,6 +136,42 @@ Required before any `make` target works (the Makefile does
 make submodules            # clones crossplane/build -> ./build (pinned b964dbe)
 ```
 
+What `make submodules` actually runs:
+
+```makefile
+submodules:
+	git submodule sync                          # copy URL from .gitmodules -> .git/config
+	git submodule update --init --recursive     # clone + checkout the pinned commit
+```
+
+What a git submodule is:
+
+- `build/` is a pointer to a specific commit of another repo (`crossplane/build`).
+- Our repo stores ONLY a "gitlink", not the files:
+  `160000 b964dbe... build`  (mode 160000 = submodule; b964dbe = pinned commit).
+- Declared in `.gitmodules`:
+  `path = build`, `url = https://github.com/crossplane/build`.
+- Before running, `build/` was an EMPTY dir (pointer present, files absent).
+
+What the commands did:
+
+- `sync`  -> ensures git knows where to fetch from.
+- `update --init --recursive` -> clones the repo into `build/` and checks out the
+  EXACT pinned commit `b964dbe` (not latest main -> reproducible builds).
+- Clean status shows a leading space: ` b964dbe... build` (checked out, matches pin).
+
+Why it matters: `build/makelib/` provides the shared Make libraries the Makefile
+`-include`s, which define the real targets:
+
+```
+golang.mk     -> make build / test / lint / reviewable
+k8s_tools.mk  -> downloads kubectl/kind/helm into a tool cache
+xpkg.mk + imagelight.mk -> build the OCI image and Crossplane package (.xpkg)
+```
+
+Without the submodule populated, those includes are empty and targets like
+`make build` / `make reviewable` would not exist.
+
 ## Next steps (planned)
 
 ```bash
