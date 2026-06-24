@@ -659,3 +659,55 @@ the mock-apiserver), not the object that calls it.
 Lesson: when renaming a struct field, run `gofmt` — shortening `newServiceFn` to
 `newClientFn` changed the alignment of the surrounding struct literal, which the
 linter flagged as a gofmt diff until reformatted.
+
+## Step 14: the local integration run (the payoff)
+
+Unit tests prove the logic in isolation; this step proves the *whole machine*
+runs — a real controller, watching a real cluster, talking to a real (mock) HTTP
+backend. Three moving parts, run by hand rather than via `make dev` (which bundles
+them and blocks the terminal):
+
+```
+mock-apiserver  ->  /tmp/mock-apiserver -addr :8088        (the external system)
+kind cluster    ->  provider-learn-dev                     (the API server)
+controller      ->  go run cmd/provider/main.go --debug    (out-of-cluster)
+```
+
+**Wiring it up.**
+1. `kind create cluster --name=provider-learn-dev` — sets the kube context.
+2. `kubectl apply -R -f package/crds` — installs the Instance + ProviderConfig CRDs.
+3. `kubectl apply -f examples/provider/config.yaml` — the ProviderConfig bundle.
+4. **Override the creds secret.** The scaffold ships a dummy base64 blob
+   (`BASE64ENCODED_PROVIDER_CREDS`). Our `newAPIClient` parses creds as JSON, so we
+   replace it with `{"endpoint":"http://localhost:8088"}`. Because the controller
+   runs *on the host* (out-of-cluster), `localhost:8088` reaches the mock directly.
+5. `go run cmd/provider/main.go --debug` — starts all controllers.
+6. `kubectl apply -f examples/database/instance.yaml` — the trigger.
+
+**What the run proved.** Driving the resource through `kubectl` and watching the
+mock server's logs, every `ExternalClient` path fired against the live stack:
+```
+CREATE   GET 404  -> POST 201        absent -> created, observableField computed
+OBSERVE  GET 200                      ResourceUpToDate: true, no further call
+UPDATE   GET 200  -> PUT 200  -> GET  patch small->large -> drift -> reconciled
+DELETE   GET 200  -> DELETE 204 -> GET 404   gone from both cluster and mock
+```
+Cluster-side the object reported `READY=True (Available)` /
+`SYNCED=True (ReconcileSuccess)`, carried `external-name=example-instance`, and its
+`status.atProvider.configurableField` tracked `small -> large`. The controller's
+debug log mirrored each transition (`CreatedExternalResource`,
+`UpdatedExternalResource`, `External resource is up to date`).
+
+**Gotchas worth remembering.**
+- *Reading `atProvider` too early.* Right after a `kubectl patch`, a quick
+  `kubectl get` can show the **old** value — `atProvider` only updates on the next
+  Observe (the requeue), not synchronously with the spec write. The truth is in the
+  reconcile log and the backend, not an instant read.
+- *The `PUT` body omits `name`.* Update sends `{"name":"","configurableField":...}`.
+  Harmless here because the mock keys off the URL path, but a real API that reads
+  `name` from the body would need the client to populate it.
+- *`make dev` vs by hand.* `make dev` is fine for a one-shot demo, but running the
+  three parts separately lets you read each log stream and apply/patch/delete
+  between observations — much better for *learning* what each call does.
+
+This is the milestone: scaffold -> build -> mock -> implement -> **verify**, closed.
