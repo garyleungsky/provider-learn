@@ -706,6 +706,9 @@ debug log mirrored each transition (`CreatedExternalResource`,
 - *The `PUT` body omits `name`.* Update sends `{"name":"","configurableField":...}`.
   Harmless here because the mock keys off the URL path, but a real API that reads
   `name` from the body would need the client to populate it.
+  **Fixed afterwards** (`fix(instance): send name in the update request body`):
+  `Update` now sets `Name` from the external-name, and the lifecycle test's PUT
+  handler asserts the body carries it so the contract can't silently regress.
 - *`make dev` vs by hand.* `make dev` is fine for a one-shot demo, but running the
   three parts separately lets you read each log stream and apply/patch/delete
   between observations — much better for *learning* what each call does.
